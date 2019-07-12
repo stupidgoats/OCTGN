@@ -75,6 +75,10 @@ namespace Octgn.Controls
             CheckBoxIsLocalGame.IsEnabled = Program.LobbyClient.IsConnected;
             LabelIsLocalGame.IsEnabled = Program.LobbyClient.IsConnected;
             lastHostedGameType = Prefs.LastHostedGameType;
+            if (GameManager.Get().GameCount == 1)
+            {
+                lastHostedGameType = GameManager.Get().Games.First().Id;
+            }
             TextBoxUserName.Text = (Program.LobbyClient.IsConnected == false
                 || Program.LobbyClient.User == null
                 || Program.LobbyClient.User.DisplayName == null) ? Prefs.Nickname : Program.LobbyClient.User.DisplayName;
@@ -259,8 +263,8 @@ namespace Octgn.Controls
             hs.Start();
 
             Prefs.Nickname = hg.HostUser.DisplayName;
-            Program.GameEngine = new GameEngine(game, Username, false, password, true);
             Program.CurrentOnlineGameName = name;
+            Program.GameEngine = new GameEngine(game, Username, false, password, true);
             Program.IsHost = true;
 
             var ip = IPAddress.Parse("127.0.0.1");

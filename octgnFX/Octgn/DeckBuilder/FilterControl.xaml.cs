@@ -40,7 +40,8 @@ namespace Octgn.DeckBuilder
                                                 new IntegerComparison("Greater than", "Card.[{0}] > {1}"),
                                                 new IntegerComparison("Less than", "Card.[{0}] < {1}"),
                                                 new IntegerComparison("Greater or Equal", "Card.[{0}] >= {1}"),
-                                                new IntegerComparison("Less or Equal", "Card.[{0}] <= {1}")
+                                                new IntegerComparison("Less or Equal", "Card.[{0}] <= {1}"),
+                                                new IntegerComparison("Does Not Equal", "Card.[{0}] <> '{1}'")
                                             };
 
         private static readonly SqlComparison[] CharComparisons = new[]
@@ -143,7 +144,9 @@ namespace Octgn.DeckBuilder
         public event EventHandler RemoveFilter;
         public event RoutedEventHandler UpdateFilters;
 
-        public bool IsOr;
+        public bool IsOr {
+            get => _property is SetPropertyDef && excludeSetCheck.IsChecked == false;
+        }
         public bool ExcludeSet;
         private bool JustClosed;
         //private string _linkText;
@@ -160,12 +163,10 @@ namespace Octgn.DeckBuilder
             {
                 if (ExcludeSet)
                 {
-                    IsOr = false;
                     return "set_id <> '" + ((DataNew.Entities.Set)comparisonList.SelectedItem).Id.ToString("D") + "'";
                 }
                 else
                 {
-                    IsOr = true;
                     return "set_id = '" + ((DataNew.Entities.Set)comparisonList.SelectedItem).Id.ToString("D") + "'";
                 }
             }
@@ -293,8 +294,13 @@ namespace Octgn.DeckBuilder
                 return;
             }
 
-            if (UpdateFilters != null && Octgn.Core.Prefs.InstantSearch && !(KeysDown().Any()))
+            if (UpdateFilters != null
+                && !KeysDown().Any()
+                && (comparisonText.Text.Length == 0 || comparisonText.Text.Length >= 3)
+                && Octgn.Core.Prefs.InstantSearch)
+            {
                 UpdateFilters(sender, e);
+            }
         }
         //only search when all keys have been lifted. 
         //this should reduce the number of searches during rappid key presses

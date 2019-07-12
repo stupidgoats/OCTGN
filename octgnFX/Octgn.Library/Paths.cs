@@ -31,11 +31,10 @@
         string SpoilsFeedPath { get; }
         string CommunityFeedPath { get; }
         string DeckPath { get; }
+        string SleevePath { get; }
         string GraveyardPath { get; }
-        string LogsPath { get; }
-        string CurrentLogPath { get; }
-        string PreviousLogPath { get; }
         string UpdatesPath { get; }
+        string GameHistoryPath { get; }
     }
 
     public class Paths : IPaths
@@ -63,9 +62,6 @@
             {
             }
             BasePath = FS.Path.GetDirectoryName(WorkingDirectory) + "\\";
-            LogsPath = FS.Path.Combine(BasePath, "Logs");
-            CurrentLogPath = FS.Path.Combine(LogsPath, "log.txt");
-            PreviousLogPath = FS.Path.Combine(LogsPath, "log.txt.1");
             DataDirectory = dataDirectory;
             PluginPath = FS.Path.Combine(DataDirectory, "Plugins");
             //DatabasePath = FS.Path.Combine(SimpleConfig.Get().DataDirectory, "Database");
@@ -77,10 +73,12 @@
             LocalFeedPath = FS.Path.Combine(DataDirectory, "LocalFeed");
             FS.Directory.CreateDirectory(LocalFeedPath);
             DeckPath = FS.Path.Combine(DataDirectory, "Decks");
+            SleevePath = FS.Path.Combine(DataDirectory, "Sleeves");
             MainOctgnFeed = "https://www.myget.org/F/octgngames/";
             SpoilsFeedPath = "https://www.myget.org/f/thespoils/";
             CommunityFeedPath = "https://www.myget.org/f/octgngamedirectory";
             UpdatesPath = FS.Path.Combine(DataDirectory, "Updates");
+            GameHistoryPath = FS.Path.Combine(DataDirectory, "History");
 
             Task.Factory.StartNew(() =>
             {
@@ -105,12 +103,10 @@
         public string CommunityFeedPath { get; set; }
         public string MainOctgnFeed { get; set; }
         public string DeckPath { get; set; }
-        public string LogsPath { get; set; }
-        public string CurrentLogPath { get; set; }
-
-        public string PreviousLogPath { get; set; }
+        public string SleevePath { get; set; }
 
         public string UpdatesPath { get; set; }
+        public string GameHistoryPath { get; set; }
         public string GraveyardPath
         {
             get

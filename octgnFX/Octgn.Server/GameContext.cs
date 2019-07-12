@@ -1,7 +1,9 @@
 ﻿using System;
 using System.Collections.Generic;
+using System.Reflection;
 using System.Threading;
 using System.Threading.Tasks;
+using log4net;
 using Octgn.Data;
 using Octgn.Online.Hosting;
 
@@ -9,6 +11,8 @@ namespace Octgn.Server
 {
     public class GameContext
     {
+        private static readonly ILog Log = LogManager.GetLogger(MethodBase.GetCurrentMethod().DeclaringType);
+
         public HostedGame Game { get; set; }
         internal Broadcaster Broadcaster { get; }
         public GameSettings GameSettings { get; }
@@ -52,24 +56,17 @@ namespace Octgn.Server
             Broadcaster.Reset(playerId);
         }
 
-        private Task _dispatcherTask = Task.FromResult<object>(null);
+        private readonly object _dispatcherLock = new object();
 
         /// <summary>
         /// Queues up an action to be run synchronusly
         /// </summary>
         /// <param name="action"></param>
         /// <returns>Task that runs the action</returns>
-        public Task Run(Action action) {
-            return _dispatcherTask = _dispatcherTask.ContinueWith((task) => action());
-        }
-
-        /// <summary>
-        /// Queues up an action to be run synchronusly
-        /// </summary>
-        /// <param name="action"></param>
-        /// <returns>Task that runs the action</returns>
-        public Task Run(Func<Task> action) {
-            return _dispatcherTask = _dispatcherTask.ContinueWith((task) => action()).Unwrap();
+        public void Run(Action action) {
+            lock (_dispatcherLock) {
+                action();
+            }
         }
     }
 }

@@ -1,3 +1,98 @@
+#3.3.132.0
++ Fixed bug blocking Pass Control and Take Control actions
+
+#3.3.131.0
++ Fix periodic lockups in game - Kelly
++ Fix not being able to connect to an offline game - Kelly
++ Fixed 'Skip' button showing up when joining games - Kelly
++ Fixed issue sometimes causing OCTGN to show a 'Disconnected' dialog when we're actually connected - Kelly
+
+#3.3.130.0
+
+#3.3.129.0
+
+#3.3.127.0
++ Fix bug with Global Player - Kelly
+
+#3.3.126.0
++ Add replay support - Kelly
++ Update some buttons and tab bar styles - Kelly
+
+#3.3.125.0
++ Fix issue causing network calls to go out of order - Kelly
++ Fix built in sleeves not being included in the installer - Kelly
++ Fix Phase Control text being cut off if too long - Kelly
++ Fix issue with lobby popping up behind the main window. - Kelly
++ Fixed some issues where hovering/clicking was only working on certain parts of list items (games list etc) - Kelly
+
+#3.3.124.0
+
+#3.3.123.0
+
+#3.3.122.0
+
+#3.3.120.0
+
+#3.3.118.0
++ Disable custom sleeves in online play for now - Kelly
+
+#3.3.117.0
++ Custom Sleeves - Kelly
+
+#3.3.116.0
++ Don't categorize deck stats. - Kelly
+
+#3.3.115.0
++ Fix game reset not working - Kelly
++ Add Card List menu item in game - Kelly
+
+#3.3.114.0
+
+#3.3.113.0
+
+#3.3.112.0
++ Made deck editor window more consistent with available hotkeys - Ben
++ Disable 'instant' searches for 1-2 characters, should dramatically improve performance - Ben
+
+#3.3.111.0
++ Fixed bolding for active deck section - Ben
++ Made New Deck Hotkey respect unsaved decks - Ben
++ Deck editor improvments, new hotkeys, better keyboard navigation. see wiki - Ben
++ Made host game window select game if only one installed - Ben
++ Other minor usability improvements in deck editor - Ben
+
+#3.3.110.0
++ Updated EULA - Kelly
++ Include o8build, Log Exporter, and Octide in installer - Kelly
++ Better uninstall instructions - Kelly
+
+#3.3.108.0
++ made main window close respect deckeditor cancel - Ben
+
+#3.3.107.0
+
+#3.3.106.0
++ Windows 7 fixes - Kellye
+
+#3.3.105.0
+
+#3.3.104.0
++ Fixed OR searches for everything - BenMatteson
+
+#3.3.103.0
++ Fixed bug where multi-property matching was being ignored in the booster pack generator
++ Fixed searching multiple sets in the deck editor - BenMatteson
+
+#3.3.102.0
+
+#3.3.101.0
+
+#3.3.100.0
+
+#3.3.99.0
+
+#3.2.98.0
+
 #3.2.97.0
 
 #3.2.96.0
@@ -3603,6 +3698,37 @@ To come...There are 30 ish more changes that can be found in our commit list htt
 
 + Added me.isActivePlayer
 + Added openUrl(url)
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
 
 
 

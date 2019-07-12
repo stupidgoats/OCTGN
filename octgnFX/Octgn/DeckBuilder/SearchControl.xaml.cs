@@ -194,34 +194,26 @@ namespace Octgn.DeckBuilder
                 e.Handled = true;
                 return;
             }
-
+            var maxCount = resultsGrid.Items.Count;
             switch (e.Key)
             {
                 case Key.Tab:
                     {
+                        e.Handled = true;
+
                         var lastFocus = Keyboard.FocusedElement as FrameworkElement;
 
-                        var cont = _deckWindow.PlayerCardSections.ItemContainerGenerator.ContainerFromItem(_deckWindow.ActiveSection);
-                        var idx = _deckWindow.PlayerCardSections.ItemContainerGenerator.IndexFromContainer(cont);
-                        if (idx + 1 >= _deckWindow.PlayerCardSections.Items.Count)
-                        {
-                            idx = 0;
-                        }
+                        if(e.KeyboardDevice.IsKeyDown(Key.LeftShift) || e.KeyboardDevice.IsKeyDown(Key.RightShift))
+                            // focus previous section
+                            _deckWindow.ChangeActiveSection(-1);
                         else
-                        {
-                            idx++;
-                        }
-                        var nc = (ContentPresenter)_deckWindow.PlayerCardSections.ItemContainerGenerator.ContainerFromIndex(idx);
-                        var presenter = VisualTreeHelper.GetChild(nc, 0);
-
-                        (presenter as Expander).Focus();
-                        //lastFocus.Focus();
-                        //resultsGrid.Focus();
+                            // focus next section
+                            _deckWindow.ChangeActiveSection(1);
+                        
                         if (lastFocus != null)
                         {
                             Keyboard.Focus(lastFocus);
                         }
-                        e.Handled = true;
                         break;
                     }
                 case Key.Escape:
@@ -231,15 +223,29 @@ namespace Octgn.DeckBuilder
                         break;
                     }
                 case Key.G:
-                {
-                    if (Keyboard.IsKeyDown(Key.LeftShift & Key.RightShift))
                     {
-                        resultsGrid.SelectedItem = resultsGrid.Items[resultsGrid.Items.Count - 1];
+                        if (Keyboard.IsKeyDown(Key.LeftShift & Key.RightShift))
+                        {
+                            resultsGrid.SelectedItem = resultsGrid.Items[maxCount - 1];
+                            resultsGrid.ScrollIntoView(resultsGrid.SelectedItem);
+                            e.Handled = true;
+                        }
+                        break;
+                    }
+                case Key.End:
+                    {
+                        resultsGrid.SelectedItem = resultsGrid.Items[maxCount - 1];
                         resultsGrid.ScrollIntoView(resultsGrid.SelectedItem);
                         e.Handled = true;
+                        break;
                     }
-                    break;
-                }
+                case Key.Home:
+                    {
+                        resultsGrid.SelectedItem = resultsGrid.Items[0];
+                        resultsGrid.ScrollIntoView(resultsGrid.SelectedItem);
+                        e.Handled = true;
+                        break;
+                    }
             }
 
             if (e.Handled) return;
@@ -251,10 +257,10 @@ namespace Octgn.DeckBuilder
             if (!String.IsNullOrWhiteSpace(NumMod))
                 loopNum = NumMod.ToInt32();
             NumMod = "";
+
             var gridItemContainer = resultsGrid.ItemContainerGenerator.ContainerFromItem(resultsGrid.SelectedItem);
             if (gridItemContainer == null) return;
             var gridItemIdx = resultsGrid.ItemContainerGenerator.IndexFromContainer(gridItemContainer);
-            var maxCount = resultsGrid.Items.Count;
             for (var i = 0; i < loopNum; i++)
             {
                 switch (e.Key)
@@ -264,29 +270,34 @@ namespace Octgn.DeckBuilder
                     case Key.A:
                     case Key.I:
                     case Key.Enter:
-                        if (CardAdded != null)
                         {
-                            var rowid = row["id"] as string;
-                            if (rowid != null) CardAdded(this, new SearchCardIdEventArgs { CardId = Guid.Parse(rowid) });
+                            if (CardAdded != null)
+                            {
+                                var rowid = row["id"] as string;
+                                if (rowid != null) CardAdded(this, new SearchCardIdEventArgs { CardId = Guid.Parse(rowid) });
+                            }
+                            e.Handled = true;
+                            break;
                         }
-                        e.Handled = true;
-                        break;
-
                     case Key.Delete:
                     case Key.D:
                     case Key.Subtract:
-                        if (CardRemoved != null)
                         {
-                            var rowid = row["id"] as string;
-                            if (rowid != null) CardRemoved(this, new SearchCardIdEventArgs { CardId = Guid.Parse(rowid) });
+                            if (CardRemoved != null)
+                            {
+                                var rowid = row["id"] as string;
+                                if (rowid != null) CardRemoved(this, new SearchCardIdEventArgs { CardId = Guid.Parse(rowid) });
+                            }
+                            e.Handled = true;
+                            break;
                         }
-                        e.Handled = true;
-                        break;
                     case Key.J:
+                    case Key.Down:
                         {
                             //down
                             var newIdx = gridItemIdx + loopNum;
-                            newIdx = (newIdx) % (maxCount + 1);
+                            if (newIdx >= maxCount)
+                                newIdx = maxCount - 1;
                             resultsGrid.SelectedItem = resultsGrid.Items[newIdx];
                             resultsGrid.ScrollIntoView(resultsGrid.SelectedItem);
                             e.Handled = true;
@@ -294,18 +305,18 @@ namespace Octgn.DeckBuilder
                             break;
                         }
                     case Key.K:
+                    case Key.Up:
                         {
                             //up
                             var newIdx = gridItemIdx - loopNum;
-                            newIdx = Math.Abs(newIdx);
-                            newIdx = (newIdx) % (maxCount + 1);
+                            if(newIdx < 0)
+                                newIdx = 0;
                             resultsGrid.SelectedItem = resultsGrid.Items[newIdx];
                             resultsGrid.ScrollIntoView(resultsGrid.SelectedItem);
                             e.Handled = true;
                             i = loopNum;
                             break;
                         }
-
                 }
             }
         }

@@ -27,12 +27,16 @@ using Octgn.Scripting;
 using Card = Octgn.Play.Card;
 using Marker = Octgn.Play.Marker;
 using Player = Octgn.Play.Player;
+using System.Collections.ObjectModel;
+using Octgn.DataNew;
+using Octgn.Play.Save;
+using Octgn.Play.State;
+using Octgn.Core.Play;
 
 namespace Octgn
 {
     [Serializable]
-    public class GameEngine : INotifyPropertyChanged
-    {
+    public class GameEngine : INotifyPropertyChanged {
         internal static ILog Log = LogManager.GetLogger(MethodBase.GetCurrentMethod().DeclaringType);
 
 
@@ -43,7 +47,10 @@ namespace Octgn
 #pragma warning restore 649
 
         public ScriptApi ScriptApi { get; set; }
-        public IDeck LastLoadedDeck { get; set; }
+
+        public ObservableDeck LoadedCards { get; }
+
+        public DeckStatsViewModel DeckStats { get; }
 
         private const int MaxRecentMarkers = 10;
         private const int MaxRecentCards = 10;
@@ -94,19 +101,113 @@ namespace Octgn
             }
         }
 
+        public History History { get; }
+
+        public bool IsReplay { get; }
+
+        public ReplayWriter ReplayWriter { get; }
+        public ReplayEngine ReplayEngine { get; }
+
         public ushort CurrentUniqueId;
 
-		/// <summary>
-		/// For Testing
-		/// </summary>
-		[Obsolete("This is only to be used for mocking")]
-	    internal GameEngine()
-	    {
+        /// <summary>
+        /// For Testing
+        /// </summary>
+        [Obsolete("This is only to be used for mocking")]
+        internal GameEngine()
+        {
 
-	    }
+        }
+
+        public GameEngine(ReplayEngine replayEngine, Game def, string nickname) {
+            ReplayEngine = replayEngine;
+            IsReplay = true;
+
+            LoadedCards = new ObservableDeck();
+            LoadedCards.Sections = new ObservableCollection<ObservableSection>();
+
+            DeckStats = new DeckStatsViewModel();
+
+            Spectator = false;
+            Program.GameMess.Clear();
+            if (def.ScriptVersion.Equals(new Version(0, 0, 0, 0))) {
+                Program.GameMess.Warning("This game doesn't have a Script Version specified. Please contact the game developer.\n\n\nYou can get in contact of the game developer here {0}", def.GameUrl);
+                def.ScriptVersion = new Version(3, 1, 0, 0);
+            }
+            if (Versioned.ValidVersion(def.ScriptVersion) == false) {
+                Program.GameMess.Warning(
+                    "Can't find API v{0}. Loading the latest version.\n\nIf you have problems, get in contact of the developer of the game to get an update.\nYou can get in contact of them here {1}",
+                    def.ScriptVersion, def.GameUrl);
+                def.ScriptVersion = Versioned.LowestVersion;
+            } else {
+                var vmeta = Versioned.GetVersion(def.ScriptVersion);
+                if (vmeta.DeleteDate <= DateTime.Now) {
+                    Program.GameMess.Warning("This game requires an API version {0} which is no longer supported by OCTGN.\nYou can still play, however some aspects of the game may no longer function as expected, and it may be removed at any time.\nYou may want to contact the developer of this game and ask for an update.\n\nYou can find more information about this game at {1}."
+                        , def.ScriptVersion, def.GameUrl);
+                }
+            }
+            //Program.ChatLog.ClearEvents();
+            IsLocal = true;
+            Definition = def;
+            Password = string.Empty;
+            _table = new Table(def.Table);
+            if (def.Phases != null) {
+                byte PhaseId = 1;
+                _allPhases = def.Phases.Select(x => new Phase(PhaseId++, x)).ToList();
+            }
+            GlobalVariables = new Dictionary<string, string>();
+            foreach (var varDef in def.GlobalVariables)
+                GlobalVariables.Add(varDef.Name, varDef.DefaultValue);
+            ScriptApi = Versioned.Get<ScriptApi>(Definition.ScriptVersion);
+            this.Nickname = nickname;
+
+            // Load all game markers
+            foreach (DataNew.Entities.Marker m in Definition.GetAllMarkers()) {
+                if (!_markersById.ContainsKey(m.Id)) {
+                    _markersById.Add(m.Id, m);
+                }
+            }
+
+            // Init fields
+            CurrentUniqueId = 1;
+            TurnNumber = 0;
+            GameBoard = Definition.GameBoards["Default"];
+            ActivePlayer = null;
+
+            foreach (var size in Definition.CardSizes) {
+                var front = ImageUtils.CreateFrozenBitmap(new Uri(size.Value.Front));
+                var back = ImageUtils.CreateFrozenBitmap(new Uri(size.Value.Back));
+                _cardFrontsBacksCache.Add(size.Key, new Tuple<BitmapImage, BitmapImage>(front, back));
+            }
+            Application.Current.Dispatcher.Invoke(new Action(() => {
+                // clear any existing players
+                Play.Player.All.Clear();
+                Player.Spectators.Clear();
+                // Create the global player, if any
+                if (Definition.GlobalPlayer != null)
+                    Play.Player.GlobalPlayer = new Play.Player(Definition, IsReplay);
+                // Create the local player
+                Play.Player.LocalPlayer = new Player(Definition, this.Nickname, Program.UserId, 255, Crypto.ModExp(Prefs.PrivateKey), false, true, IsReplay);
+
+                IsConnected = true;
+            }));
+
+        }
 
         public GameEngine(Game def, string nickname, bool specator, string password = "", bool isLocal = false)
         {
+            History = new History(def.Id);
+            if (Program.IsHost) {
+                History.Name = Program.CurrentOnlineGameName;
+            }
+
+            ReplayWriter = new ReplayWriter();
+
+            LoadedCards = new ObservableDeck();
+            LoadedCards.Sections = new ObservableCollection<ObservableSection>();
+
+            DeckStats = new DeckStatsViewModel();
+
             Spectator = specator;
             Program.GameMess.Clear();
             if (def.ScriptVersion.Equals(new Version(0, 0, 0, 0)))
@@ -182,11 +283,11 @@ namespace Octgn
                 // clear any existing players
                 Play.Player.All.Clear();
                 Player.Spectators.Clear();
+                // Create the local player
+                Play.Player.LocalPlayer = new Player(Definition, this.Nickname, Program.UserId, 255, Crypto.ModExp(Prefs.PrivateKey), specator, true, IsReplay);
                 // Create the global player, if any
                 if (Definition.GlobalPlayer != null)
-                    Play.Player.GlobalPlayer = new Play.Player(Definition);
-                // Create the local player
-                Play.Player.LocalPlayer = new Player(Definition, this.Nickname, Program.UserId, 255, Crypto.ModExp(Prefs.PrivateKey), specator, true);
+                    Play.Player.GlobalPlayer = new Play.Player(Definition, IsReplay);
             }));
         }
 
@@ -253,6 +354,8 @@ namespace Octgn
 
         public Game Definition { get; set; }
 
+        private object _isConnectedLocker = new object();
+
         public bool IsConnected
         {
             get
@@ -261,23 +364,16 @@ namespace Octgn
             }
             set
             {
-                if (value == this.isConnected) return;
-                if (Program.Dispatcher != null && Program.Dispatcher.CheckAccess() == false)
-                {
-                    Program.Dispatcher.Invoke(new Action(() => { IsConnected = value; }));
-                    return;
+                lock (_isConnectedLocker) {
+                    if (value == this.isConnected) {
+                        return;
+                    }
+                    Log.DebugFormat("IsConnected = {0}", value);
+                    this.isConnected = value;
                 }
-                Log.DebugFormat("IsConnected = {0}", value);
-                this.isConnected = value;
                 this.OnPropertyChanged("IsConnected");
             }
         }
-
-        //public BitmapImage CardFrontBitmap { get; private set; }
-
-        //public BitmapImage CardBackBitmap { get; private set; }
-
-
 
         public IList<DataNew.Entities.Marker> Markers
         {
@@ -387,6 +483,172 @@ namespace Octgn
 
         #endregion
 
+        public bool IsWelcomed { get; private set; }
+
+        private string _historyPath = null;
+        private string _replayPath = null;
+        private string _logPath = null;
+
+        private StreamWriter _logStream = null;
+
+        private string _gameName;
+
+        public void OnWelcomed(Guid gameSessionId, string gameName, bool waitForGameState) {
+            IsWelcomed = true;
+
+            Program.GameEngine.SessionId = gameSessionId;
+            Program.GameEngine.WaitForGameState = waitForGameState;
+            _gameName = gameName;
+        }
+
+        public void OnStart() {
+            if (IsReplay) {
+                return;
+            }
+
+            Program.GameEngine.History.Name = _gameName;
+
+            if (_historyPath == null) {
+                var dir = new DirectoryInfo(Config.Instance.Paths.GameHistoryPath);
+
+                if (!dir.Exists) {
+                    dir.Create();
+                }
+
+                for (var i = 0; i < Int32.MaxValue; i++) {
+                    var historyFileName = History.Name;
+                    var replayFileName = History.Name;
+                    var logFileName = History.Name;
+
+                    if (i > 0) {
+                        historyFileName = replayFileName = logFileName = historyFileName + "_" + i;
+                    }
+
+                    historyFileName = Path.Combine(dir.FullName, historyFileName + ".o8h");
+                    replayFileName = Path.Combine(dir.FullName, replayFileName + ".o8r");
+                    logFileName = Path.Combine(dir.FullName, logFileName + ".o8l");
+
+                    if (!File.Exists(historyFileName) && !File.Exists(replayFileName)) {
+                        _historyPath = historyFileName;
+                        _replayPath = replayFileName;
+                        _logPath = logFileName;
+                        break;
+                    }
+                }
+
+                SaveHistory();
+                var replay = new Replay {
+                    Name = _gameName,
+                    GameId = Definition.Id,
+                    User = Player.LocalPlayer.Name
+                };
+
+                var stream = File.Open(_replayPath, FileMode.CreateNew, FileAccess.Write, FileShare.Read);
+
+                Program.GameEngine.ReplayWriter.Start(replay, stream);
+
+                var logStream = File.Open(_logPath, FileMode.CreateNew, FileAccess.Write, FileShare.Read);
+
+                _logStream = new StreamWriter(logStream);
+
+                Program.GameMess.OnMessage += GameMess_OnMessage;
+            }
+        }
+
+        private void GameMess_OnMessage(Core.Play.IGameMessage obj) {
+            if (_logStream == null) return;
+
+            if (obj is DebugMessage) return;
+
+            string blockString = null;
+
+            Program.Dispatcher.InvokeAsync(() => { 
+                var block = ChatControl.GameMessageToBlock(obj);
+
+                blockString = BlockToString(block);
+
+                try {
+                    _logStream.Write(blockString);
+
+                    _logStream.Flush();
+                } catch (ObjectDisposedException) {
+
+                }
+            });
+        }
+
+        private string BlockToString(System.Windows.Documents.Block block) {
+            if (block == null) return string.Empty;
+
+            switch (block) {
+                case System.Windows.Documents.List list: {
+                        var result = string.Empty;
+
+                        foreach (var item in list.ListItems) {
+                            foreach (var itemBlock in item.Blocks) {
+                                result += BlockToString(itemBlock);
+                            }
+                            result += Environment.NewLine;
+                        }
+
+                        return result;
+                    }
+                case System.Windows.Documents.Paragraph pg: {
+                        var result = string.Empty;
+
+                        foreach (var inline in pg.Inlines) {
+                            result += RunToString(inline);
+                        }
+
+                        return result;
+                    }
+                case System.Windows.Documents.Section sec: {
+                        var result = string.Empty;
+
+                        foreach (var secBlock in sec.Blocks) {
+                            result += BlockToString(secBlock);
+                        }
+                        result += Environment.NewLine;
+
+                        return result;
+                    }
+                default: {
+                        throw new InvalidOperationException($"Block {block.GetType().Name} not implemented.");
+                    }
+            }
+        }
+
+        private string RunToString(System.Windows.Documents.Inline inline) {
+            switch (inline) {
+                case System.Windows.Documents.Run run: {
+                        return run.Text;
+                    }
+
+                case System.Windows.Documents.Span span: {
+                        var ret = string.Empty;
+                        foreach (var sinline in span.Inlines) {
+                            ret += RunToString(sinline);
+                        }
+                        return ret;
+                    }
+
+                case System.Windows.Documents.LineBreak lb: {
+                        return Environment.NewLine;
+                    }
+
+                case System.Windows.Documents.InlineUIContainer uicontainer: {
+                        return string.Empty;
+                    }
+
+                case System.Windows.Documents.AnchoredBlock ab: {
+                        return string.Empty;
+                    }
+
+                default:
+                    throw new InvalidOperationException($"Inline {inline.GetType().Name} not implemented.");
+            }
+        }
+
         public void Begin()
         {
             if (_BeginCalled) return;
@@ -398,6 +660,10 @@ namespace Octgn
                                      Program.GameEngine.Definition.Id, Program.GameEngine.Definition.Version, this.Password
                                      , Spectator);
             Program.IsGameRunning = true;
+
+            if (IsReplay) {
+                ReplayEngine.Start();
+            }
         }
 
         public void Resume()
@@ -436,6 +702,9 @@ namespace Octgn
 
             foreach (var g in Definition.GlobalVariables)
                 GlobalVariables[g.Name] = g.DefaultValue;
+
+            DeckStats.Reset();
+
             //fix MAINWINDOW bug
             PlayWindow mainWin = WindowManager.PlayWindow;
             mainWin.RaiseEvent(new CardEventArgs(CardControl.CardHoveredEvent, mainWin));
@@ -446,11 +715,17 @@ namespace Octgn
 
         public void End()
         {
+            Program.GameMess.OnMessage -= GameMess_OnMessage;
+
+            SaveHistory();
+            ReplayWriter?.Dispose();
+            ReplayEngine?.Dispose();
+            _logStream?.Dispose();
+
             Program.GameEngine = null;
             Player.Reset();
             Card.Reset();
             CardIdentity.Reset();
-            History.Reset();
             Selection.Clear();
         }
 
@@ -475,9 +750,8 @@ namespace Octgn
 
         public void LoadDeck(IDeck deck, bool limited)
         {
-            LastLoadedDeck = deck;
             var def = Program.GameEngine.Definition;
-            int nCards = LastLoadedDeck.CardCount();
+            int nCards = deck.CardCount();
             var ids = new int[nCards];
             var keys = new Guid[nCards];
             var cards = new Card[nCards];
@@ -485,8 +759,34 @@ namespace Octgn
             var sizes = new string[nCards];
             var gtmps = new List<GrpTmp>(); //for temp groups visibility
             int j = 0;
-            foreach (ISection section in LastLoadedDeck.Sections)
+            foreach (var section in deck.Sections)
             {
+                { // Add cards to LoadedCards deck
+                    if (!LoadedCards.Sections.Any(x => x.Name == section.Name)) {
+                        // Add section
+                        ((ObservableCollection<ObservableSection>)LoadedCards.Sections).Add(new ObservableSection() {
+                            Name = section.Name,
+                            Shared = section.Shared,
+                            Cards = new ObservableCollection<ObservableMultiCard>()
+                        });
+
+                    }
+
+                    var loadedCardsSection = LoadedCards.Sections.Single(x => x.Name == section.Name);
+
+                    foreach (var card in section.Cards) {
+                        var existingCard = loadedCardsSection.Cards.FirstOrDefault(x => x.Id == card.Id);
+
+                        if (existingCard != null) {
+                            existingCard.Quantity++;
+                        } else {
+                            var newCard = new ObservableMultiCard(card);
+
+                            loadedCardsSection.Cards.AddCard(newCard);
+                        }
+                    }
+                }
+
                 DeckSection sectionDef = null;
                 sectionDef = section.Shared ? def.SharedDeckSections[section.Name] : def.DeckSections[section.Name];
                 if (sectionDef == null)
@@ -503,6 +803,7 @@ namespace Octgn
                     gtmps.Add(gt);
                     group.SetVisibility(false, false);
                 }
+
                 foreach (IMultiCard element in section.Cards)
                 {
                     //DataNew.Entities.Card mod = Definition.GetCardById(element.Id);
@@ -510,7 +811,6 @@ namespace Octgn
                     {
                         //for every card in the deck, generate a unique key for it, ID for it
                         var card = element.ToPlayCard(player);
-                        card.SetSleeve(LastLoadedDeck.SleeveId);
                         ids[j] = card.Id;
                         keys[j] = card.Type.Model.Id;
                         //keys[j] = card.GetEncryptedKey();
@@ -518,6 +818,8 @@ namespace Octgn
                         sizes[j] = card.Size.Name;
                         cards[j++] = card;
                         group.AddAt(card, group.Count);
+
+                        DeckStats.AddCard(card);
                     }
 
                     // Load images in the background
@@ -527,7 +829,47 @@ namespace Octgn
                         DispatcherPriority.Background, pictureUri);
                 }
             }
-            Program.Client.Rpc.LoadDeck(ids, keys, groups, sizes, SleeveManager.Instance.GetSleeveString(LastLoadedDeck.SleeveId), limited);
+
+            string sleeveString = null;
+
+            if(deck.Sleeve != null) {
+                try {
+                    var loadSleeve = true;
+
+                    if (!IsLocal) {
+                        var isSubscriber = SubscriptionModule.Get().IsSubscribed;
+
+                        if (isSubscriber == null) {
+                            loadSleeve = false;
+
+                            Log.Warn("Can't set deck sleeve, unable to determin if user is a subscriber.");
+
+                            Program.GameMess.Warning($"Deck sleeve can not be loaded, subscriber status is unknown.");
+
+                        } else if (isSubscriber == false) {
+                            loadSleeve = false;
+
+                            Log.Warn("Not authorized to use deck sleeve.");
+
+                            Program.GameMess.Warning($"Deck sleeve can not be used, you're not a subscriber.");
+                        }
+                    }
+
+                    if (loadSleeve) {
+                        Player.LocalPlayer.SetSleeve(deck.Sleeve);
+
+                        sleeveString = Sleeve.ToString(deck.Sleeve);
+                    } else {
+                        Log.Info("Sleeve will not be loaded.");
+                    }
+                } catch (Exception ex) {
+                    Log.Warn(ex.Message, ex);
+
+                    Program.GameMess.Warning($"There was an error loading the decks sleeve.");
+                }
+            }
+
+            Program.Client.Rpc.LoadDeck(ids, keys, groups, sizes, sleeveString ?? string.Empty, limited);
             //reset the visibility to what it was before pushing the deck to everybody. //bug (google) #20
             foreach (GrpTmp g in gtmps)
             {
@@ -670,6 +1012,15 @@ namespace Octgn
         {
             Log.Debug("Ready");
             Program.Client.Rpc.Ready(Player.LocalPlayer);
+        }
+
+        public void SaveHistory() {
+            if (IsReplay) return;
+            if (_historyPath == null) return;
+
+            var serialized = History.GetSnapshot(this, Player.LocalPlayer);
+
+            File.WriteAllBytes(_historyPath, serialized);
         }
 
         public void ExecuteRemoteCall(Player fromPlayer, string func, string args)

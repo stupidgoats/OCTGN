@@ -215,7 +215,7 @@ namespace Octgn.Server
             _player.SaidHello = true;
 
             // Welcome newcomer and asign them their side
-            _player.Rpc.Welcome(_player.Id, _context.Game.Id, GameStarted);
+            _player.Rpc.Welcome(_player.Id, _context.Game.Id, _context.Game.Name, GameStarted);
             _player.Rpc.PlayerSettings(_player.Id, _player.Settings.InvertedTable, _player.Settings.IsSpectator);
 
             // Notify everybody of the newcomer
@@ -266,7 +266,7 @@ namespace Octgn.Server
 
             oldPlayerInfo.SaidHello = true;
             // welcome the player and assign them their side
-            oldPlayerInfo.Rpc.Welcome(oldPlayerInfo.Id, _context.Game.Id, true);
+            oldPlayerInfo.Rpc.Welcome(oldPlayerInfo.Id, _context.Game.Id, _context.Game.Name, true);
             // Notify everybody of the newcomer
             _context.Broadcaster.NewPlayer(oldPlayerInfo.Id, nick, userId, pkey, oldPlayerInfo.Settings.InvertedTable, oldPlayerInfo.Settings.IsSpectator);
 
@@ -288,34 +288,20 @@ namespace Octgn.Server
             for (var i = 0; i < id.Length; i++)
                 id[i] = s << 16 | (id[i] & 0xffff);
 
-            var sstring = "";
-            try {
-                var split = sleeveString.Split(new char[1] { '\t' }, 2);
-                if (split.Length == 2) {
-                    if (int.TryParse(split[0], out var sid)) {
-                        if (Uri.TryCreate(split[1], UriKind.Absolute, out var url)) {
-                            if (!_context.Config.IsLocal) {
-                                // Check if the user can even do this
-                                var p = _player;
-                                var c = new ApiClient();
-                                var resp = c.CanUseSleeve(p.Nick, sid);
-                                if (resp.Authorized) {
-                                    sstring = split[1];
-                                }
-                            } else {
-                                sstring = split[1];
-                            }
-                        }
+            if (!_context.Config.IsLocal) {
+                // Check if the user can even do this
+                var p = _player;
+                if (!p.IsSubbed) {
+                    sleeveString = null;
+                } if(!string.IsNullOrWhiteSpace(sleeveString)) {
+                    if (sleeveString.StartsWith("custom")){
+                        // Disable custom sleeves for now.
+                        sleeveString = null;
                     }
                 }
-
-            } catch (Exception e) {
-                if (_context.Config.IsLocal)
-                    Log.Warn("LoadDeck", e);
-                else
-                    Log.Error("LoadDeck", e);
             }
-            _context.Broadcaster.LoadDeck(id, type, group, size, sstring, limited);
+
+            _context.Broadcaster.LoadDeck(id, type, group, size, sleeveString ?? string.Empty, limited);
         }
 
         public void CreateCard(int[] id, Guid[] type, string[] size, int @group) {

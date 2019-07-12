@@ -6,12 +6,17 @@ using System;
 using System.Collections.Generic;
 using System.Collections.ObjectModel;
 using System.ComponentModel;
+using System.IO;
 using System.Linq;
 using System.Reflection;
 using System.Threading.Tasks;
 using System.Windows.Media;
+using System.Windows.Media.Imaging;
 using log4net;
+using Octgn.Core;
+using Octgn.Core.DataExtensionMethods;
 using Octgn.Core.Play;
+using Octgn.DataNew.Entities;
 using Octgn.Site.Api;
 
 namespace Octgn.Play
@@ -119,7 +124,7 @@ namespace Octgn.Play
             all.CollectionChanged += (sender, args) =>
             {
                 allExceptGlobal.Clear();
-                foreach (var p in all.ToArray().Where(x => x != Player.GlobalPlayer))
+                foreach (var p in all.ToArray().Where(x => !x.IsGlobal))
                 {
                     allExceptGlobal.Add(p);
                 }
@@ -326,7 +331,7 @@ namespace Octgn.Play
         //Color for the chat.
         // Associated color
         public Color Color { get; set; }
-		public Color ActualColor { get; set; }
+        public Color ActualColor { get; set; }
 
         // Work around a WPF binding bug ? Borders don't seem to bind correctly to Color!
         public Brush Brush
@@ -359,6 +364,21 @@ namespace Octgn.Play
             }
         }
 
+        public BitmapImage SleeveImage {
+            get => _sleeveImage;
+            set {
+                if(value != _sleeveImage) {
+                    _sleeveImage = value;
+                    OnPropertyChanged(nameof(SleeveImage));
+                }
+            }
+        }
+        private BitmapImage _sleeveImage;
+
+        public void SetSleeve(ISleeve sleeve) {
+            SleeveImage = sleeve.GetImage();
+        }
+
         //Set the player's color based on their id.
         public void SetPlayerColor(int idx)
         {
@@ -370,12 +390,12 @@ namespace Octgn.Play
                 playerColor = _playerColors[(idx - 1) % _playerColors.Length];
 
             ActualColor = playerColor;
-			if (this == LocalPlayer)
-			{
-				return;
-			}
-	        Color = playerColor;
-			_solidBrush = new SolidColorBrush(Color);
+            if (this == LocalPlayer)
+            {
+                return;
+            }
+            Color = playerColor;
+            _solidBrush = new SolidColorBrush(Color);
             _solidBrush.Freeze();
             _transparentBrush = new SolidColorBrush(Color) { Opacity = 0.4 };
             _transparentBrush.Freeze();
@@ -386,28 +406,28 @@ namespace Octgn.Play
             OnPropertyChanged("TransparentBrush");
         }
 
-	    public void SetPlayerColor(string colorHex)
-	    {
-			var convertFromString = ColorConverter.ConvertFromString(colorHex);
-		    if (convertFromString != null)
-		    {
-				ActualColor = (Color)convertFromString;
+        public void SetPlayerColor(string colorHex)
+        {
+            var convertFromString = ColorConverter.ConvertFromString(colorHex);
+            if (convertFromString != null)
+            {
+                ActualColor = (Color)convertFromString;
 
-				if (this == LocalPlayer)
-				{
-					return;
-				}
+                if (this == LocalPlayer)
+                {
+                    return;
+                }
 
-				Color = (Color) convertFromString;
+                Color = (Color) convertFromString;
 
-				_solidBrush = new SolidColorBrush(Color);
-			    _transparentBrush = new SolidColorBrush(Color) {Opacity = 0.4};
+                _solidBrush = new SolidColorBrush(Color);
+                _transparentBrush = new SolidColorBrush(Color) {Opacity = 0.4};
 
-				OnPropertyChanged("Color");
-				OnPropertyChanged("Brush");
-				OnPropertyChanged("TransparentBrush");
-			}
-	    }
+                OnPropertyChanged("Color");
+                OnPropertyChanged("Brush");
+                OnPropertyChanged("TransparentBrush");
+            }
+        }
 
         #endregion
 
@@ -418,13 +438,16 @@ namespace Octgn.Play
             State = PlayerState.Connected;
         }
 
+        public bool IsLocal { get; }
+
         // C'tor
-        internal Player(DataNew.Entities.Game g, string name, string userId, byte id, ulong pkey, bool spectator, bool local)
+        internal Player(DataNew.Entities.Game g, string name, string userId, byte id, ulong pkey, bool spectator, bool local, bool isReplay)
         {
             // Cannot access Program.GameEngine here, it's null.
 
             Id = id;
             _name = name;
+            IsLocal = local;
 
             if (!string.IsNullOrWhiteSpace(userId)) {
                 UserId = userId;
@@ -465,7 +488,7 @@ namespace Octgn.Play
             // Create counters
             _counters = new Counter[0];
             if (g.Player.Counters != null)
-                _counters = g.Player.Counters.Select(x => new Counter(this, x)).ToArray();
+                _counters = g.Player.Counters.Select(x => new Counter(this, x, isReplay)).ToArray();
             // Create global variables
             GlobalVariables = new Dictionary<string, string>();
             foreach (var varD in g.Player.GlobalVariables)
@@ -501,9 +524,12 @@ namespace Octgn.Play
             CanKick = local == false && Program.IsHost;
         }
 
+        public bool IsGlobal { get; }
+
         // C'tor for global items
-        internal Player(DataNew.Entities.Game g)
+        internal Player(DataNew.Entities.Game g, bool isReplay)
         {
+            IsGlobal = true;
             _spectator = false;
             SetupPlayer(false);
             var globalDef = g.GlobalPlayer;
@@ -524,7 +550,7 @@ namespace Octgn.Play
             // Create counters
             _counters = new Counter[0];
             if (globalDef.Counters != null)
-                _counters = globalDef.Counters.Select(x => new Counter(this, x)).ToArray();
+                _counters = globalDef.Counters.Select(x => new Counter(this, x, isReplay)).ToArray();
             // Create global's lPlayer groups
             // TODO: This could fail with a run-time exception on write, make it safe
             // I don't know if the above todo is still relevent - Kelly Elton - 3/18/2013

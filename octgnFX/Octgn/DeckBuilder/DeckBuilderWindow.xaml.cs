@@ -2,7 +2,6 @@
 using System.Collections.ObjectModel;
 using System.ComponentModel;
 using System.Globalization;
-using System.IO;
 using System.Linq;
 using System.Reflection;
 using System.Windows;
@@ -12,6 +11,7 @@ using System.Windows.Input;
 using System.Windows.Navigation;
 using Microsoft.Win32;
 using Octgn.Core;
+using Octgn.DataNew;
 using System.Collections.Generic;
 using System.Windows.Controls.Primitives;
 using Octgn.Core.DataExtensionMethods;
@@ -20,7 +20,6 @@ using Octgn.Core.Plugin;
 using Octgn.DataNew.Entities;
 using Octgn.Library.Exceptions;
 using Octgn.Library.Plugin;
-using Octgn.Site.Api.Models;
 using Octgn.Windows;
 
 using log4net;
@@ -28,6 +27,7 @@ using Octgn.Controls;
 using System.Windows.Media;
 using System.Windows.Documents;
 using Octgn.Extentions;
+using System.Windows.Media.Imaging;
 
 namespace Octgn.DeckBuilder
 {
@@ -44,6 +44,23 @@ namespace Octgn.DeckBuilder
         private Guid set_id;
 
         private bool exitOnClose;
+        private bool isRealClosing = false;
+
+        public event DeckChangedEventHandler DeckChanged;
+
+        public delegate void DeckChangedEventHandler(object sender, DeckChangedEventArgs e);
+
+        public class DeckChangedEventArgs
+        {
+            public ObservableDeck Deck;
+            public Game Game;
+
+            public DeckChangedEventArgs(ObservableDeck deck, Game game)
+            {
+                this.Deck = deck;
+                this.Game = game;
+            }
+        }
 
         public bool AlwaysShowProxy
         {
@@ -73,6 +90,35 @@ namespace Octgn.DeckBuilder
             this.exitOnClose = exitOnClose;
             Searches = new ObservableCollection<SearchControl>();
             InitializeComponent();
+            CreateDeckIfDefaultGame();
+            newSubMenu.ItemsSource = GameManager.Get().Games;
+            LoadPlugins();
+            SetupAndLoadDeck(deck);
+        }
+
+        private void SetupAndLoadDeck(IDeck deck)
+        {
+            if (deck != null)
+            {
+                if (deck is MetaDeck)
+                {
+                    this._deckFilename = (deck as MetaDeck).Path;
+                }
+                var g = GameManager.Get().Games.FirstOrDefault(x => x.Id == deck.GameId);
+                if (g != null)
+                {
+                    Game = g;
+                    LoadDeck(deck);
+                }
+                else
+                {
+                    TopMostMessageBox.Show($"The game required by the deck is not installed. Please install it first.", "Error", MessageBoxButton.OK, MessageBoxImage.Error);
+                }
+            }
+        }
+
+        private void CreateDeckIfDefaultGame()
+        {
             // If there's only one game in the repository, create a deck of the correct kind
             try
             {
@@ -83,6 +129,7 @@ namespace Octgn.DeckBuilder
                     {
                         Game = g;
                         Deck = Game.CreateDeck().AsObservable();
+                        SleeveImage = null;
                         _deckFilename = null;
                     }
 
@@ -103,33 +150,42 @@ namespace Octgn.DeckBuilder
                     MessageBoxImage.Error);
 
             }
-            Version oversion = Assembly.GetExecutingAssembly().GetName().Version;
-            newSubMenu.ItemsSource = GameManager.Get().Games;
-            //Title = "Octgn Deck Editor  version " + oversion;
+        }
 
+        private void LoadPlugins()
+        {
             var deplugins = PluginManager.GetPlugins<IDeckBuilderPlugin>();
             foreach (var p in deplugins)
             {
                 try
                 {
-                    p.OnLoad(GameManager.Get());
+                    if (p is IEventBindingDeckBuilderPlugin)
+                    {
+                        ((IEventBindingDeckBuilderPlugin)p).OnLoad(this, GameManager.Get());
+                    }
+                    else
+                    {
+                        p.OnLoad(GameManager.Get());
+                    }
+
                     foreach (var m in p.MenuItems)
                     {
                         var mi = new MenuItem() { Header = m.Name };
                         var m1 = m;
                         mi.Click += (sender, args) =>
+                        {
+                            try
                             {
-                                try
-                                {
-                                    m1.OnClick(this);
-                                }
-                                catch (Exception e)
-                                {
-                                    new ErrorWindow(e).Show();
-                                }
-                            };
+                                m1.OnClick(this);
+                            }
+                            catch (Exception e)
+                            {
+                                new ErrorWindow(e).Show();
+                            }
+                        };
                         MenuPlugins.Items.Add(mi);
                     }
+
                 }
                 catch (Exception e)
                 {
@@ -137,21 +193,6 @@ namespace Octgn.DeckBuilder
                 }
 
             }
-            if (deck != null)
-            {
-                if (deck is MetaDeck)
-                {
-                    this._deckFilename = (deck as MetaDeck).Path;
-                }
-                var g = GameManager.Get().Games.FirstOrDefault(x => x.Id == deck.GameId);
-                if (g != null) {
-                    Game = g;
-                    LoadDeck(deck);
-                } else {
-                    TopMostMessageBox.Show($"The game required by the deck is not installed. Please install it first.", "Error", MessageBoxButton.OK, MessageBoxImage.Error);
-                }
-            }
-
         }
 
         #region Search tabs
@@ -212,6 +253,17 @@ namespace Octgn.DeckBuilder
                 OnPropertyChanged("DeckSharedSections");
             }
         }
+
+        public BitmapImage SleeveImage {
+            get => _sleeveImage;
+            set {
+                if(value != _sleeveImage) {
+                    _sleeveImage = value;
+                    OnPropertyChanged(nameof(SleeveImage));
+                }
+            }
+        }
+        private BitmapImage _sleeveImage;
 
         public IEnumerable<ObservableSection> DeckSections
         {
@@ -288,35 +340,10 @@ namespace Octgn.DeckBuilder
 
         #endregion
 
-        private void NewDeckCommand(object sender, ExecutedRoutedEventArgs e)
+        private void NewDeck(Game game)
         {
-            e.Handled = true;
-            if (Game == null)
-            {
-                if (GameManager.Get().GameCount == 1) Game = GameManager.Get().Games.First();
-                else
-                {
-                    TopMostMessageBox.Show("You have to select a game before you can use this command.", "Error",
-                                    MessageBoxButton.OK);
-                    return;
-                }
-                //if (Program.GamesRepository.Games.Count == 1)
-                //    Game = Program.GamesRepository.Games[0];
-                //else
-                //{
-                //    MessageBox.Show("You have to select a game before you can use this command.", "Error",
-                //                    MessageBoxButton.OK);
-                //    return;
-                //}
-            }
-            Deck = Game.CreateDeck().AsObservable();
-            //Deck = new Deck(Game);
-            _deckFilename = null;
-        }
-
-        private void NewClicked(object sender, RoutedEventArgs e)
-        {
-            var game = (DataNew.Entities.Game)((MenuItem)e.OriginalSource).DataContext;
+            if (!GameManager.Get().Games.Contains(game))
+                throw new ArgumentException("Invalid game for new deck");
             if (game.DeckSections.Count == 0 && game.SharedDeckSections.Count == 0)
             {
                 TopMostMessageBox.Show(
@@ -341,11 +368,38 @@ namespace Octgn.DeckBuilder
                         return;
                 }
             }
+            
             Game = game;
             CommandManager.InvalidateRequerySuggested();
             Deck = Game.CreateDeck().AsObservable();
-            //Deck = new Deck(Game);
+            SleeveImage = Deck.Sleeve.GetImage();
             _deckFilename = null;
+            InvokeDeckChangedEvent();
+        }
+
+        private void NewDeckCommand(object sender, ExecutedRoutedEventArgs e)
+        {
+            e.Handled = true;
+            Game game = Game;
+            if (game == null)
+            {
+                // Default to creating deck for last hosted game.
+                Guid lastGameGuid = Prefs.LastHostedGameType;
+                if (lastGameGuid == Guid.Empty)
+                {
+                    TopMostMessageBox.Show("You have to select a game before you can use this command.", "Error",
+                                    MessageBoxButton.OK);
+                    return;
+                }
+                game = GameManager.Get().Games.FirstOrDefault(x => x.Id == lastGameGuid);
+            }
+            NewDeck(game);
+        }
+
+        private void NewClicked(object sender, RoutedEventArgs e)
+        {
+            var game = (DataNew.Entities.Game)((MenuItem)e.OriginalSource).DataContext;
+            NewDeck(game);
         }
 
         private void LoadFonts(Control control)
@@ -492,10 +546,11 @@ namespace Octgn.DeckBuilder
                                 MessageBoxButton.OK, MessageBoxImage.Error);
                 return;
             }
-            //Game = Program.GamesRepository.Games.First(g => g.Id == newDeck.GameId);
             Deck = newDeck;
+            SleeveImage = Deck.Sleeve.GetImage();
             _deckFilename = ofd.FileName;
             CommandManager.InvalidateRequerySuggested();
+            InvokeDeckChangedEvent();
         }
 
         private void showShortcutsClick(object sender, RoutedEventArgs e)
@@ -509,6 +564,20 @@ namespace Octgn.DeckBuilder
             // Expected: Managed Debugging Assistant NotMarshalable
             // See Also: http://stackoverflow.com/questions/31362077/loadfromcontext-occured
             Close();
+        }
+
+        public bool TryClose()
+        {
+            try
+            {
+                Close();
+                return isRealClosing;
+            }
+            catch(Exception ex)
+            {
+                Log.Warn(ex.Message, ex);
+            }
+            return false;
         }
 
         protected override void OnClosing(CancelEventArgs e)
@@ -528,9 +597,11 @@ namespace Octgn.DeckBuilder
                         break;
                     default:
                         e.Cancel = true;
+                        isRealClosing = false;
                         return;
                 }
             }
+            isRealClosing = true;
             Game = null; // Close DB if required
             WindowManager.DeckEditor = null;
             if (this.exitOnClose)
@@ -558,19 +629,12 @@ namespace Octgn.DeckBuilder
 
             // Don't hide the picture if the selected element was removed 
             // with a keyboard shortcut from the results grid
-            if (element == null && !grid.IsFocused) return;
+            // if (element == null && !grid.IsFocused) return;
+            if (element == null)
+                return;
             var nc = element.ToMultiCard();
             var sc = new Card(nc);
-                         //{
-                         //    ImageUri = nc.ImageUri,
-                         //    Name = nc.Name,
-                         //    Alternate = nc.Alternate,
-                         //    Id = nc.Id,
-                         //    Properties =
-                         //        nc.Properties.ToDictionary(
-                         //            x => x.Key.Clone() as string, x => x.Value.Clone() as CardPropertySet),
-                         //    SetId = nc.SetId
-                         //};
+                         
             cardImageControl.Card.SetCard(sc);
             selection = element.ImageUri;
             set_id = element.GetSet().Id;
@@ -591,9 +655,34 @@ namespace Octgn.DeckBuilder
             else
             {
                 var card = Game.GetCardById(e.CardId);
-                ActiveSection.Cards.AddCard(card.ToMultiCard());
+                element = card.ToMultiCard();
+                ActiveSection.Cards.AddCard(element);
                 this.InvalidateVisual();
             }
+            // Focus section where card was added
+            var cont = PlayerCardSections.ItemContainerGenerator.ContainerFromItem(ActiveSection);
+            Expander presenter = (Expander)VisualTreeHelper.GetChild(cont, 0);
+            if (presenter.IsExpanded)
+            {
+                // Bring change into view
+                DataGrid grid = (DataGrid)presenter.Content;
+                DataGridRow row = (DataGridRow)grid.ItemContainerGenerator.ContainerFromItem(element);
+                if (row == null) // new card, added at bottom
+                {
+                    // would be nice to get rid of the magic numbers, but don't want to fetch and measure multiple rows...
+                    grid.BringIntoView(new Rect(0, grid.ActualHeight - 30, grid.ActualWidth, 60)); // ~last two rows after new card added
+                }
+                else
+                {
+                    row.BringIntoView();
+                }
+            }
+            else
+            {
+                presenter.BringIntoView();
+            }
+
+            InvokeDeckChangedEvent();
         }
 
         private void RemoveResultCard(object sender, SearchCardIdEventArgs e)
@@ -605,55 +694,152 @@ namespace Octgn.DeckBuilder
             if (element.Quantity <= 0)
                 ActiveSection.Cards.RemoveCard(element);
             this.InvalidateVisual();
+
+            InvokeDeckChangedEvent();
+        }
+
+        private void InvokeDeckChangedEvent()
+        {
+            try
+            {
+                DeckChanged?.Invoke(this, new DeckChangedEventArgs(_deck, _game));
+            }
+            catch (Exception ex)
+            {
+                TopMostMessageBox.Show(ex.Message, "Error occurred", MessageBoxButton.OK, MessageBoxImage.Error);
+            }
         }
 
         private void DeckKeyDownHandler(object sender, KeyEventArgs e)
         {
             var grid = (DataGrid)sender;
-            var element = (IMultiCard)grid.SelectedItem;
-            if (element == null) return;
 
-            // jods used a Switch statement here. I needed to check conditions of multiple keys.
+            if (grid.SelectedItem == null && grid.Items.Count > 0)
+                grid.SelectedIndex = 0;
+
+            var element = (IMultiCard)grid.SelectedItem;
+            if (element == null)
+                return;
+
             int items = grid.Items.Count - 1;
             int moveUp = grid.SelectedIndex - 1;
             int moveDown = grid.SelectedIndex + 1;
-            if (e.KeyboardDevice.IsKeyDown(Key.LeftCtrl) && e.KeyboardDevice.IsKeyDown(Key.Add))
+            var kbd = e.KeyboardDevice;
+
+            #region Move cards
+            if (kbd.IsKeyDown(Key.LeftCtrl) || kbd.IsKeyDown(Key.RightCtrl))
             {
-                if (grid.Items.SortDescriptions.Count != 0) // only allow re-ordering when not sorted
+                // Move cards within section
+                if (grid.Items.SortDescriptions.Count == 0) // only allow re-ordering when not sorted to avoid confusion
                 {
-                    _unsaved = true;
-                    if (moveDown <= items)
-                        ActiveSection.Cards.Move(element, moveDown);
-                    grid.Focus();
-                    grid.ScrollIntoView(element);
-                    e.Handled = true;
+                    // Move selected card down in deck
+                    if (e.Key == Key.Add || e.Key == Key.Down)
+                    {
+                        if (moveDown <= items) // Not last element
+                        {
+                            ActiveSection.Cards.Move(element, moveDown);
+                            _unsaved = true;
+                        }
+                        e.Handled = true;
+                    }
+                    // Move selected card up in deck
+                    else if (e.Key == Key.Subtract || e.Key == Key.Up)
+                    {
+                        if (moveUp >= 0)
+                        {
+                            ActiveSection.Cards.Move(element, moveUp);
+                            _unsaved = true;
+                        }
+                        e.Handled = true;
+                    }
+                    // Move selected card to bottom of deck
+                    else if (e.Key == Key.End)
+                    {
+                        if (moveDown <= items) // Not last element
+                        {
+                            ActiveSection.Cards.Move(element, items);
+                            _unsaved = true;
+                        }
+                        e.Handled = true;
+                    }
+                    // Move selected card to Top of deck
+                    else if (e.Key == Key.Home)
+                    {
+                        if (moveUp >= 0)
+                        {
+                            ActiveSection.Cards.Move(element, 0);
+                            _unsaved = true;
+                        }
+                        e.Handled = true;
+                    }
                 }
             }
-            else if (e.KeyboardDevice.IsKeyDown(Key.LeftCtrl) && e.KeyboardDevice.IsKeyDown(Key.Subtract))
+            #endregion
+
+            #region Card count
+            else if (e.Key == Key.Add || e.Key == Key.Insert)
             {
-                if (grid.Items.SortDescriptions.Count != 0) // only allow re-ordering when not sorted
-                {
-                    _unsaved = true;
-                    if (moveUp >= 0)
-                        ActiveSection.Cards.Move(element, moveUp);
-                    grid.Focus();
-                    grid.ScrollIntoView(element);
-                    e.Handled = true;
-                }
-            }
-            else if (e.KeyboardDevice.IsKeyDown(Key.Add) || e.KeyboardDevice.IsKeyDown(Key.Insert))
-            {
-                _unsaved = true;
                 element.Quantity += 1;
-                e.Handled = true;
-            }
-            else if (e.KeyboardDevice.IsKeyDown(Key.Delete) || e.KeyboardDevice.IsKeyDown(Key.Subtract))
-            {
                 _unsaved = true;
+                e.Handled = true;
+                InvokeDeckChangedEvent();
+            }
+            else if (e.Key == Key.Delete || e.Key == Key.Subtract)
+            {
+                int idx = grid.SelectedIndex;
                 element.Quantity -= 1;
-                if (element.Quantity <= 0) ActiveSection.Cards.RemoveCard(element);
+                if (element.Quantity <= 0)
+                    ActiveSection.Cards.RemoveCard(element);
+                if (idx <= items)
+                    grid.SelectedIndex = idx;
+                else
+                    grid.SelectedIndex = moveUp; // -1 == no selected row, so this is safe
+                _unsaved = true;
                 e.Handled = true;
             }
+            #endregion
+
+            #region Focus
+            // Jump to last element
+            else if (e.Key == Key.End)
+            {
+                element = ActiveSection.Cards.Last();
+                grid.SelectedIndex = items;
+                e.Handled = true;
+                InvokeDeckChangedEvent();
+            }
+            // Jump to first element
+            else if (e.Key == Key.Home)
+            {
+                element = ActiveSection.Cards.First();
+                grid.SelectedIndex = 0;
+                e.Handled = true;
+            }
+            // Select next card
+            else if (e.Key == Key.Down || e.Key == Key.J)
+            {
+                if (moveDown <= items)
+                    grid.SelectedIndex = moveDown;
+                element = (IMultiCard)grid.SelectedItem;
+                e.Handled = true;
+            }
+            // Select previous card
+            else if (e.Key == Key.Up || e.Key == Key.K)
+            {
+                if (moveUp >= 0)
+                    grid.SelectedIndex = moveUp;
+                element = (IMultiCard)grid.SelectedItem;
+                e.Handled = true;
+            }
+            #endregion
+
+            // Focus element if we did any of the above
+            if (e.Handled)
+            {
+                grid.Focus();
+                grid.ScrollIntoView(element);
+            }
+
         }
 
         private void ElementEditEnd(object sender, DataGridCellEditEndingEventArgs e)
@@ -671,6 +857,7 @@ namespace Octgn.DeckBuilder
                     var item = ic.SelectedItem as IMultiCard;
                     if (item == null) return;
                     ActiveSection.Cards.RemoveCard(item);
+                    InvokeDeckChangedEvent();
                 }
             }
 
@@ -885,6 +1072,8 @@ namespace Octgn.DeckBuilder
         public void LoadDeck(IDeck deck)
         {
             Deck = deck.AsObservable();
+            SleeveImage = deck.Sleeve.GetImage();
+
             _unsaved = true;
         }
 
@@ -1049,17 +1238,22 @@ namespace Octgn.DeckBuilder
 
         private void RemoveSleeve(object sender, RequestNavigateEventArgs e)
         {
-			if(Deck != null)
-				Deck.SleeveId = 0;
+            if (Deck != null) {
+                Deck.Sleeve = null;
+                SleeveImage = null;
+            }
         }
 
-        private void OnSleeveManagerClose(ApiSleeve obj)
+        private void OnSleeveManagerClose(Sleeve obj)
         {
             if (obj == null)
                 return;
             if (Deck == null)
                 return;
-            Deck.SleeveId = obj.Id;
+            
+            Deck.Sleeve = obj;
+
+            SleeveImage = Deck.Sleeve.GetImage();
         }
 
         private void ChangeSortButton_Click(object sender, RoutedEventArgs e)
@@ -1131,6 +1325,59 @@ namespace Octgn.DeckBuilder
                     parentCols[0].Width = new GridLength(parentCols[0].ActualWidth - (e.PreviousSize.Width - e.NewSize.Width));
                 }
             }
+        }
+
+        private void DeckExpander_PreviewKeyDown(object sender, KeyEventArgs e)
+        {
+            var kbd = e.KeyboardDevice;
+            // Focus section
+            if (e.Key == Key.Tab)
+            {
+                e.Handled = true;
+                if (kbd.IsKeyDown(Key.LeftShift) || kbd.IsKeyDown(Key.RightShift))
+                    // focus previous section
+                    ChangeActiveSection(-1);
+                else
+                    // focus next section
+                    ChangeActiveSection(1);
+            }
+            else if (e.Key == Key.Enter || e.Key == Key.Escape)
+            {
+                e.Handled = true;
+                var cont = PlayerCardSections.ItemContainerGenerator.ContainerFromItem(ActiveSection);
+                Expander presenter = (Expander)VisualTreeHelper.GetChild(cont, 0);
+                presenter.IsExpanded = !presenter.IsExpanded;
+                if (presenter.IsExpanded)
+                {
+                    DataGrid grid = (DataGrid)presenter.Content;
+                    grid.Focus();
+                }
+                else
+                {
+                    presenter.Focus();
+                }
+            }
+        }
+
+        public void ChangeActiveSection(int delta)
+        {
+            var cont = PlayerCardSections.ItemContainerGenerator.ContainerFromItem(ActiveSection);
+            var idx = PlayerCardSections.ItemContainerGenerator.IndexFromContainer(cont);
+            // Focus previous section
+            idx += delta;
+            if (idx < 0 || idx >= PlayerCardSections.Items.Count)
+                return;
+            var nc = (ContentPresenter)PlayerCardSections.ItemContainerGenerator.ContainerFromIndex(idx);
+            Expander presenter = (Expander)VisualTreeHelper.GetChild(nc, 0);
+            DataGrid grid = (DataGrid)presenter.Content;
+            if (presenter.IsExpanded)
+            {
+                grid.Focus();
+                // magic number because ActualHeight for the headder doesn't even make sense, so I eyeballed something
+                (presenter.Header as FrameworkElement).BringIntoView(new Rect(0, -5, presenter.ActualWidth, 70));
+            }
+            else
+                presenter.Focus();
         }
     }
 

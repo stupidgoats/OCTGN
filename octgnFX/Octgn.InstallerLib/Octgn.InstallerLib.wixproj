@@ -12,12 +12,12 @@
   <PropertyGroup Condition=" '$(Configuration)|$(Platform)' == 'Debug|x86' ">
     <OutputPath>bin\$(Configuration)\</OutputPath>
     <IntermediateOutputPath>obj\$(Configuration)\</IntermediateOutputPath>
-    <DefineConstants>Debug;HarvestPath=..\Octgn\bin\$(Configuration)</DefineConstants>
+    <DefineConstants>Debug;HarvestPath=..\Octgn\bin\$(Configuration);RootPath=..\..\</DefineConstants>
   </PropertyGroup>
   <PropertyGroup Condition=" '$(Configuration)|$(Platform)' == 'Release|x86' ">
     <OutputPath>bin\$(Configuration)\</OutputPath>
     <IntermediateOutputPath>obj\$(Configuration)\</IntermediateOutputPath>
-    <DefineConstants>HarvestPath=..\Octgn\bin\$(Configuration)</DefineConstants>
+    <DefineConstants>HarvestPath=..\Octgn\bin\$(Configuration);RootPath=..\..\</DefineConstants>
   </PropertyGroup>
   <ItemGroup>
     <Compile Include="EventSource.wxs" />
